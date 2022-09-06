@@ -48,7 +48,7 @@ public class ParticleFilter {
         return self.estimatePosition()
     }
     
-    private func initializeDistribution(firstPosition firstPos: Point,  firstPositionStd firstPosStd: Point) {
+    public func initializeDistribution(firstPosition firstPos: Point,  firstPositionStd firstPosStd: Point) {
         for idx in 0..<self.numParticles {
             let sampleX = gaussianDistribution(mean: firstPos.x, deviation: firstPosStd.x)
             let sampleY = gaussianDistribution(mean: firstPos.y, deviation: firstPosStd.y)
@@ -66,7 +66,7 @@ public class ParticleFilter {
      * fai spostare la particella in quella direzione
      * se il segmento di spostamento intercetta il muro particella si ferma dove i due segmenti si intercettano
      */
-    private func transitionModel(deltaT dt: Double) {
+    public func transitionModel(deltaT dt: Double) {
         for idx in 0..<self.numParticles {
             let oldPos = self.particles[idx].p
             let velocity = Double.random(in: 0 ..< 1)
@@ -87,7 +87,7 @@ public class ParticleFilter {
     /*
      * aggiorna per ogni particella il suo peso a 1/(distanza da arPosition)
      */
-    private func perceptionModel(_ arPos: Point) {
+    public func perceptionModel(_ arPos: Point) {
         for idx in 0..<self.numParticles {
             let distance = distance(self.particles[idx].p, arPos)
             self.particles[idx].weight = 1 / distance
@@ -99,7 +99,7 @@ public class ParticleFilter {
      * TODO: una certa percentuale di particelle andrebbero create randomicamente (es 1% ogni secondo)
      *       attorno alla posizione data da AR ignorando le particelle precedenti
      */
-    private func resample() {
+    public func resample() {
         let particlesCopy = self.particles
         self.particles.removeAll()
         
@@ -124,7 +124,7 @@ public class ParticleFilter {
      * prendi paticella x% più lontana dal baricentro (es 90%) e prendi distanza di quella particella dal baricentro
      * ritorna baricentro come pos e distanza come raggio
      */
-    private func estimatePosition() -> ApproximatedPosition {
+    public func estimatePosition() -> ApproximatedPosition {
         let cogX = (self.particles.reduce(0.0, {$0 + $1.p.x})) / Double(self.particles.count)
         let cogY = (self.particles.reduce(0.0, {$0 + $1.p.y})) / Double(self.particles.count)
         let centerOfGravity = Point(x: cogX, y: cogY)
