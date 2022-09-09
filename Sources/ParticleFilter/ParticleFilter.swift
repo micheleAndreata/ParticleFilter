@@ -6,6 +6,11 @@
 //
 import Foundation
 
+let MAX_PARTICLE_VELOCITY = 200.0
+let DEFAULT_POSITION_STD = Point(x: 30, y: 30)
+let RAND_RESAMPLE_PERCENTAGE = 0.01
+let RAND_RESAMPLE_INTERVAL = 1.0
+
 public class ParticleFilter {
     // time istant of the last prediction
     var lastPredictionTime = -1.0
@@ -21,16 +26,36 @@ public class ParticleFilter {
     
     var wall: Wall
     
+    private var approxPos = ApproximatedPosition(position: Point(x: 0, y: 0), approximationRadius: 0)
+    
+    private var randomResampling = false
+    
     public init(_ numParticles: Int, _ wall: Wall) {
         self.numParticles = numParticles
         self.wall = wall
+        if #available(iOS 10.0, *) {
+            let _ = Timer.scheduledTimer(withTimeInterval: RAND_RESAMPLE_INTERVAL, repeats: true) { _ in
+                self.randomResampling = true
+            }
+        } else {
+            // Fallback on earlier versions
+            Timer.scheduledTimer(
+                timeInterval: RAND_RESAMPLE_INTERVAL,
+                target: self,
+                selector: #selector(self.doRandResample),
+                userInfo: nil, repeats: true)
+        }
+    }
+    
+    @objc private func doRandResample() {
+        self.randomResampling = true
     }
     
     public func predictPosition(_ arPosition: Point) -> ApproximatedPosition {
-        // TODO: cambiare std prima pos
-        let firstPosStd = Point(x: 0.8, y: 0.8)
+        let firstPosStd = DEFAULT_POSITION_STD
         
         if self.lastPredictionTime == -1 {
+            self.approxPos = ApproximatedPosition(position: arPosition, approximationRadius: 15)
             self.initializeDistribution(firstPosition: arPosition, firstPositionStd: firstPosStd)
             self.lastPredictionTime = Date().timeIntervalSince1970
         }
@@ -45,10 +70,16 @@ public class ParticleFilter {
         
         self.resample()
         
-        return self.estimatePosition()
+        self.approxPos = self.estimatePosition()
+        
+        return self.approxPos
     }
     
-    public func initializeDistribution(firstPosition firstPos: Point,  firstPositionStd firstPosStd: Point) {
+    /*
+     * Initializes particle filter by initializing particles to Gaussian
+     * distribution around first position and all the weights set to 1
+     */
+    private func initializeDistribution(firstPosition firstPos: Point,  firstPositionStd firstPosStd: Point) {
         for idx in 0..<self.numParticles {
             let sampleX = gaussianDistribution(mean: firstPos.x, deviation: firstPosStd.x)
             let sampleY = gaussianDistribution(mean: firstPos.y, deviation: firstPosStd.y)
@@ -59,24 +90,38 @@ public class ParticleFilter {
     }
     
     /*
-     * prende ogni particella e la sposta a caso nei dintorni di dove stava prima
-     * con velocità massima di 1 m/s
-     * sceglie un angolo a caso con distribuzione uniforme su 0 - 360
-     * sceglie una velocità a caso con distribuzione uniforme su 0 - 1 m/s
-     * fai spostare la particella in quella direzione
-     * se il segmento di spostamento intercetta il muro particella si ferma dove i due segmenti si intercettano
+     * chooses an angle randomly with uniform distribution on [0, 360]
+     * chooses a velocity randomly with uniform ditribution on [0, MAX_PARTICLE_VELOCITY]
+     * moves the particle in that direction
+     * if displacement segment intercepts the wall, particle stops where the two segments intersect
      */
-    public func transitionModel(deltaT dt: Double) {
+    private func transitionModel(deltaT dt: Double) {
         for idx in 0..<self.numParticles {
             let oldPos = self.particles[idx].p
-            let velocity = Double.random(in: 0 ..< 1)
+            let velocity = Double.random(in: 0 ..< MAX_PARTICLE_VELOCITY)
             let angle = Double.random(in: 0 ..< 2 * Double.pi)
             let newXPos = oldPos.x + velocity * dt * cos(angle)
             let newYPos = oldPos.y + velocity * dt * sin(angle)
             let newPos = Point(x: newXPos, y: newYPos)
-            var i: Point?
-            if getIntersection(newPos, oldPos, self.wall.from, self.wall.to, intersection: &i) {
-                self.particles[idx].p = i!
+            var int: Point?
+            if getIntersection(newPos, oldPos, self.wall.from, self.wall.to, intersection: &int) {
+                // The intersection is not exactly on the wall but a little bit behind. I choose
+                // 90% of the distance between the old position and the intersection on the wall.
+                // Segment parametrization taken from:
+                // https://math.stackexchange.com/questions/134112/find-a-point-on-a-line-segment-located-at-a-distance-d-from-one-endpoint#134135
+//                let d = 0.9*distance(oldPos, int!)
+//                let denominator = sqrt((oldPos.x - int!.x)*(oldPos.x - int!.x) + (oldPos.y - int!.y)*(oldPos.y - int!.y))
+//                if denominator == 0 {
+//                    self.particles[idx].p = int!
+//                    print("zero den")
+//                }
+//                else {
+//                    let quasiIntX = oldPos.x + (d*(int!.x - oldPos.x) / denominator)
+//                    let quasiIntY = oldPos.y + (d*(int!.y - oldPos.y) / denominator)
+//    //                print(Point(x: quasiIntX, y: quasiIntY))
+//                    self.particles[idx].p = Point(x: quasiIntX, y: quasiIntY)
+//                }
+                self.particles[idx].p = oldPos
             }
             else {
                 self.particles[idx].p = newPos
@@ -84,22 +129,17 @@ public class ParticleFilter {
         }
     }
     
-    /*
-     * aggiorna per ogni particella il suo peso a 1/(distanza da arPosition)
-     */
-    public func perceptionModel(_ arPos: Point) {
+    private func perceptionModel(_ arPos: Point) {
         for idx in 0..<self.numParticles {
             let distance = distance(self.particles[idx].p, arPos)
-            self.particles[idx].weight = 1 / distance
+            self.particles[idx].weight = 1 / (distance)
         }
     }
     
     /*
      * Resample particles with replacement with probability proportional to weight
-     * TODO: una certa percentuale di particelle andrebbero create randomicamente (es 1% ogni secondo)
-     *       attorno alla posizione data da AR ignorando le particelle precedenti
      */
-    public func resample() {
+    private func resample() {
         let particlesCopy = self.particles
         self.particles.removeAll()
         
@@ -113,27 +153,43 @@ public class ParticleFilter {
         // With the discrete distribution pick out particles according to their
         // weights. The higher the weight of the particle, the higher are the chances
         // of the particle being included multiple times.
-        for _ in particlesCopy {
-            particles.append(particlesCopy[weightsDist.draw()])
+        // It also resamples randomly a percentage (RAND_RESAMPLE_PERCENTAGE) of the
+        // particles every RAND_RESAMPLE_INTERVAL seconds
+        if self.randomResampling {
+            let partialNumPart = Int(floor((1 - RAND_RESAMPLE_PERCENTAGE)*Double(particlesCopy.count)))
+            let arPosStd = DEFAULT_POSITION_STD
+            for i in 0..<partialNumPart {
+                var p = particlesCopy[weightsDist.draw()]
+                p.id = i
+                self.particles.append(p)
+            }
+            for i in partialNumPart..<particlesCopy.count {
+                let randX = gaussianDistribution(mean: self.approxPos.position.x, deviation: arPosStd.x)
+                let randY = gaussianDistribution(mean: self.approxPos.position.y, deviation: arPosStd.y)
+                let randomParticle = Particle(id: i, p: Point(x: randX, y: randY), weight: 1.0)
+                self.particles.append(randomParticle)
+            }
+            self.randomResampling = false
+        }
+        else {
+            for i in 0..<particlesCopy.count {
+                var p = particlesCopy[weightsDist.draw()]
+                p.id = i
+                particles.append(p)
+            }
         }
     }
     
-    /*
-     * cicla su tutte le particelle e calcola la media pesata di x e y --> questo è il baricentro
-     * ordina particelle sulla base della loro distanza dal baricentro
-     * prendi paticella x% più lontana dal baricentro (es 90%) e prendi distanza di quella particella dal baricentro
-     * ritorna baricentro come pos e distanza come raggio
-     */
     public func estimatePosition() -> ApproximatedPosition {
         let cogX = (self.particles.reduce(0.0, {$0 + $1.p.x})) / Double(self.particles.count)
         let cogY = (self.particles.reduce(0.0, {$0 + $1.p.y})) / Double(self.particles.count)
         let centerOfGravity = Point(x: cogX, y: cogY)
         
-        let distances = self.particles.map{($0.id, distance($0.p, centerOfGravity))}
-        let sortedDistances = distances.sorted(by: {$0.1>$1.1})
+        let distances = self.particles.map{distance($0.p, centerOfGravity)}
+        let sortedDistances = distances.sorted(by: {$0<$1})
         
         let idx = Int(floor(0.9*Double(self.particles.count)))
-        let radius = sortedDistances[idx].1
+        let radius = sortedDistances[idx]
 
         return ApproximatedPosition(position: centerOfGravity, approximationRadius: radius)
     }
@@ -144,8 +200,8 @@ public struct Point {
     var y: Double
 }
 
-public struct Particle {
-    var id: Int
+public struct Particle: Identifiable {
+    public var id: Int
     var p: Point
     var weight: Double
 }
