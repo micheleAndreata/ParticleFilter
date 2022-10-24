@@ -31,41 +31,52 @@ public class ParticleFilter {
     public var defaultPositionStd: Point
     
     /// Interval in seconds at which it performs a random resampling
-    public var randResampleInterval: Double
+    public var randResampleInterval: Double {
+        get {return self._randResampleInterval}
+        set {
+            self._randResampleInterval = newValue
+            self.timer.invalidate()
+            self.timer = Timer.scheduledTimer(withTimeInterval: _randResampleInterval, repeats: true) { _ in
+                self.randomResampling = true
+            }
+        }
+    }
+    private var _randResampleInterval = 1.0
+    private var timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {_ in }
     
-    /// percentage (value between 0 and 1) of particles randomly resampled
+    /// percentage (value between 0 and 100) of particles randomly resampled
     public var randResamplePercentage: Double {
         get {return self._randResamplePercentage}
         set {
-            if newValue >= 0.0 && newValue <= 1.0 {
+            if newValue >= 0.0 && newValue <= 100.0 {
                 self._randResamplePercentage = newValue
             }
-            else if newValue > 1.0 {
-                self._randResamplePercentage = 1.0
+            else if newValue > 100.0 {
+                self._randResamplePercentage = 100.0
             }
             else {
                 self._randResamplePercentage = 0.0
             }
         }
     }
-    private var _randResamplePercentage = 0.9
+    private var _randResamplePercentage = 10.0
     
-    /// Percentage (value between 0 and 1) of the longest distance to the center of gravity. It defines the size of the approximationRadius
+    /// Percentage (value between 0 and 100) of the longest distance to the center of gravity. It defines the size of the approximationRadius
     public var apprxRadiusPercentage: Double {
         get {return self._apprxRadiusPercentage}
         set {
-            if newValue >= 0.0 && newValue <= 1.0 {
+            if newValue >= 0.0 && newValue <= 100.0 {
                 self._apprxRadiusPercentage = newValue
             }
-            else if newValue > 1.0 {
-                self._apprxRadiusPercentage = 1.0
+            else if newValue > 100.0 {
+                self._apprxRadiusPercentage = 100.0
             }
             else {
                 self._apprxRadiusPercentage = 0.0
             }
         }
     }
-    private var _apprxRadiusPercentage = 0.9
+    private var _apprxRadiusPercentage = 90.0
     
     public var isInitialized = false
     
@@ -73,7 +84,7 @@ public class ParticleFilter {
     
     private var randomResampling = false
     
-    public init(numParticles: Int, wall: Wall, maxParticleVelocity: Double, randResamplePercentage: Double, randResampleInterval: Double, apprxRadiusPercentage: Double, defaultPositionStd: Point) {
+    public init(numParticles: Int, wall: Wall, maxParticleVelocity: Double, defaultPositionStd: Point, randResamplePercentage: Double, randResampleInterval: Double, apprxRadiusPercentage: Double) {
         self._numParticles = numParticles
         self.wall = wall
         self.maxParticleVelocity = maxParticleVelocity
@@ -81,22 +92,6 @@ public class ParticleFilter {
         self.randResampleInterval = randResampleInterval
         self.apprxRadiusPercentage = apprxRadiusPercentage
         self.randResamplePercentage = randResamplePercentage
-        if #available(iOS 10.0, *) {
-            let _ = Timer.scheduledTimer(withTimeInterval: randResampleInterval, repeats: true) { _ in
-                self.randomResampling = true
-            }
-        } else {
-            // Fallback on earlier versions
-            Timer.scheduledTimer(
-                timeInterval: randResampleInterval,
-                target: self,
-                selector: #selector(self.doRandResample),
-                userInfo: nil, repeats: true)
-        }
-    }
-    
-    @objc private func doRandResample() {
-        self.randomResampling = true
     }
     
     public func predictPosition(_ arPosition: Point) -> ApproximatedPosition {
@@ -209,7 +204,7 @@ public class ParticleFilter {
         // It also resamples randomly a percentage (randResamplePercentage) of the
         // particles every randResampleInterval seconds
         if self.randomResampling {
-            let partialNumPart = Int(floor((1 - randResamplePercentage)*Double(particlesCopy.count)))
+            let partialNumPart = Int(floor((1 - randResamplePercentage/100)*Double(particlesCopy.count)))
             let arPosStd = self.defaultPositionStd
             for i in 0..<partialNumPart {
                 var p = particlesCopy[weightsDist.draw()]
@@ -241,7 +236,7 @@ public class ParticleFilter {
         let distances = self.particles.map{distance($0.p, centerOfGravity)}
         let sortedDistances = distances.sorted(by: {$0<$1})
         
-        let idx = Int(floor(apprxRadiusPercentage*Double(self.particles.count - 1)))
+        let idx = Int(floor((apprxRadiusPercentage/100.0)*Double(self.particles.count - 1)))
         let radius = sortedDistances[idx]
 
         return ApproximatedPosition(position: centerOfGravity, approximationRadius: radius)
@@ -335,4 +330,3 @@ func getIntersection(_ p0: Point,_ p1: Point,_ p2: Point,_ p3: Point,intersectio
 func distance(_ p1: Point,_ p2: Point) -> Double {
     return sqrt((p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y))
 }
-
